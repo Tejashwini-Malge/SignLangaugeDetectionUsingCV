@@ -75,7 +75,7 @@ These files are required for real-time testing.
 
 ---
 
-## 2. `training.py`
+## 2. `trainingrealdata.py`
 
 This file is used for real-time sign detection.
 
