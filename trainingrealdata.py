@@ -1,285 +1,334 @@
 """
-TRAIN ON REAL ASL SIGNS
-Uses actual ASL signs (DRINK, BOOK, CHAIR, etc) recorded by user
-This is the CORRECT approach for real sign language!
+REAL-TIME ASL SIGN DETECTION — SENTENCE MODE
+- Sliding window inference (continuous, no manual trigger)
+- Segmentation via hand-gap + confidence drop
+- Sentence buffer accumulation
+- TTS voice output via pyttsx3
+
+Install: pip install pyttsx3
 """
 
 import numpy as np
-import os
 import cv2
 import mediapipe as mp
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.utils import to_categorical
-from sklearn.preprocessing import StandardScaler
 import pickle
+import threading
+import time
+from collections import deque
+from tensorflow.keras.models import load_model
 
-def load_real_asl_signs(data_dir='real_asl_data'):
-    """Load actual ASL sign videos"""
-    
-    X = []
-    y = []
-    sign_to_id = {}
-    
-    print("\n" + "="*70)
-    print("LOADING REAL ASL SIGNS")
-    print("="*70)
-    print(f"\nLoading from: {data_dir}\n")
-    
-    if not os.path.exists(data_dir):
-        print(f"❌ ERROR: {data_dir} not found!")
-        print("Please run: python collect_real_asl_signs.py")
-        return None, None, None
-    
-    # Get all signs
-    sign_files = {}
-    for filename in os.listdir(data_dir):
-        if filename.endswith('.npy'):
-            # Extract sign name from filename (e.g., "DRINK_video_0.npy" → "DRINK")
-            sign_name = filename.rsplit('_video_', 1)[0]
-            if sign_name not in sign_files:
-                sign_files[sign_name] = []
-            sign_files[sign_name].append(filename)
-    
-    sign_id = 0
-    for sign_name in sorted(sign_files.keys()):
-        sign_to_id[sign_id] = sign_name
-        
-        print(f"  Loading {sign_name}...", end="")
-        
-        video_count = 0
-        for video_file in sorted(sign_files[sign_name]):
-            # Load video data
-            video_data = np.load(os.path.join(data_dir, video_file))
-            
-            # Normalize to 30 frames
-            if len(video_data) > 30:
-                # Take every nth frame to get 30
-                step = len(video_data) // 30
-                video_data = video_data[::step][:30]
-            elif len(video_data) < 30:
-                # Pad with repeat of last frame
-                padding = np.tile(video_data[-1], (30 - len(video_data), 1))
-                video_data = np.vstack([video_data, padding])
-            
-            X.append(video_data)
-            y.append(sign_id)
-            video_count += 1
-        
-        print(f" {video_count} videos")
-        sign_id += 1
-    
-    X = np.array(X)
-    y = np.array(y)
-    
-    print(f"\n✓ Loaded {len(X)} videos from {len(sign_to_id)} signs")
-    print(f"  Shape: {X.shape}")
-    
-    return X, y, sign_to_id
+try:
+    import pyttsx3
+    TTS_AVAILABLE = True
+except ImportError:
+    print("[WARNING] pyttsx3 not installed. Run: pip install pyttsx3")
+    TTS_AVAILABLE = False
 
 
-def build_model(num_classes):
-    """Build LSTM model for ASL signs"""
-    
-    model = Sequential([
-        LSTM(256, return_sequences=True, input_shape=(30, 63)),
-        Dropout(0.3),
-        LSTM(128, return_sequences=False),
-        Dropout(0.3),
-        Dense(256, activation='relu'),
-        Dropout(0.2),
-        Dense(num_classes, activation='softmax')
-    ])
-    
-    model.compile(
-        optimizer='adam',
-        loss='categorical_crossentropy',
-        metrics=['accuracy']
-    )
-    
-    return model
+# ─── CONFIG ────────────────────────────────────────────────────────────────────
+
+MODEL_PATH   = 'real_asl_model.h5'
+SCALER_PATH  = 'real_asl_scaler.pkl'
+SIGNS_PATH   = 'real_asl_signs.pkl'
+
+WINDOW_SIZE        = 30     # frames fed to LSTM
+SLIDE_STEP         = 5      # run inference every N frames
+CONFIDENCE_THRESH  = 0.80   # minimum confidence to accept a prediction
+WORD_GAP_FRAMES    = 15     # no-hand frames = word boundary
+SENTENCE_GAP_FRAMES= 45     # no-hand frames = end of sentence (~1.5 sec at 30fps)
+MAX_SENTENCE_WORDS = 12     # auto-flush sentence after this many words
+DEBOUNCE_FRAMES    = 10     # same word must appear this many frames before accepted
 
 
-def train_model(X, y, num_classes):
-    """Train on real ASL data"""
-    
-    print("\n" + "="*70)
-    print("TRAINING ON REAL ASL SIGNS")
-    print("="*70)
-    
-    # Normalize
-    print("\nNormalizing data...")
-    X_flat = X.reshape(-1, 63)
-    scaler = StandardScaler()
-    X_flat = scaler.fit_transform(X_flat)
-    X = X_flat.reshape(len(X), 30, 63)
-    
-    # Build model
-    print("Building model...")
-    model = build_model(num_classes)
-    print(model.summary())
-    
-    # Train
-    print(f"\nTraining on {len(X)} videos, {num_classes} signs...")
-    y_cat = to_categorical(y, num_classes)
-    
-    history = model.fit(
-        X, y_cat,
-        epochs=50,
-        batch_size=16,
-        validation_split=0.2,
-        verbose=1
-    )
-    
-    # Save
-    print("\nSaving model...")
-    model.save('real_asl_model.h5')
-    pickle.dump(scaler, open('real_asl_scaler.pkl', 'wb'))
-    print("✓ Model saved: real_asl_model.h5")
-    
-    return model, scaler, history
+# ─── TTS THREAD ────────────────────────────────────────────────────────────────
+
+class TTSSpeaker:
+    """Runs TTS in a background thread so it never blocks the camera loop."""
+
+    def __init__(self):
+        self._queue = []
+        self._lock  = threading.Lock()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def speak(self, text):
+        with self._lock:
+            self._queue.append(text)
+
+    def _run(self):
+        if not TTS_AVAILABLE:
+            return
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 155)   # words per minute
+        engine.setProperty('volume', 1.0)
+        while True:
+            with self._lock:
+                if self._queue:
+                    text = self._queue.pop(0)
+                else:
+                    text = None
+            if text:
+                print(f"\n🔊  Speaking: \"{text}\"")
+                engine.say(text)
+                engine.runAndWait()
+            else:
+                time.sleep(0.05)
 
 
-def evaluate_model(model, X, y, sign_to_id):
-    """Show accuracy per sign"""
-    
-    print("\n" + "="*70)
-    print("ACCURACY BY SIGN")
-    print("="*70)
-    
-    predictions = model.predict(X, verbose=0)
-    pred_labels = np.argmax(predictions, axis=1)
-    
-    for sign_id in sorted(sign_to_id.keys()):
-        mask = y == sign_id
-        if np.sum(mask) > 0:
-            accuracy = np.mean(pred_labels[mask] == y[mask])
-            sign_name = sign_to_id[sign_id]
-            
-            # Show accuracy bar
-            bar_length = 30
-            filled = int(bar_length * accuracy)
-            bar = "█" * filled + "░" * (bar_length - filled)
-            
-            print(f"{sign_name:15} {bar} {accuracy*100:6.1f}%")
+# ─── SEGMENTATION STATE MACHINE ────────────────────────────────────────────────
+
+class SegmentationState:
+    """
+    Tracks word boundaries and sentence boundaries.
+
+    Word boundary  → hand absent for WORD_GAP_FRAMES
+    Sentence end   → hand absent for SENTENCE_GAP_FRAMES
+    """
+
+    def __init__(self, speaker: TTSSpeaker):
+        self.speaker          = speaker
+        self.sentence_buffer  = []          # list of accepted words
+        self.no_hand_frames   = 0
+        self.last_committed   = None        # last word added to buffer
+        self.debounce_counter = 0           # consecutive frames with same prediction
+        self.debounce_word    = None
+        self.word_boundary_hit= False       # True after a gap, reset on next detection
+
+    # called every frame --------------------------------------------------------
+
+    def update(self, hand_detected: bool, predicted_word: str | None, confidence: float):
+        """
+        hand_detected : bool
+        predicted_word: str or None (None if confidence below threshold)
+        confidence    : float 0-1
+        """
+
+        if hand_detected and predicted_word is not None:
+            self.no_hand_frames    = 0
+            self.word_boundary_hit = False
+            self._try_commit(predicted_word, confidence)
+
+        else:
+            self.no_hand_frames   += 1
+            self.debounce_counter  = 0
+            self.debounce_word     = None
+
+            if self.no_hand_frames == WORD_GAP_FRAMES:
+                # Word boundary — allow the next different word to be committed
+                self.word_boundary_hit = True
+                self.last_committed    = None   # reset so same sign can repeat after gap
+
+            if self.no_hand_frames == SENTENCE_GAP_FRAMES:
+                self._flush_sentence()
+
+        # Safety flush on max length
+        if len(self.sentence_buffer) >= MAX_SENTENCE_WORDS:
+            self._flush_sentence()
+
+    def _try_commit(self, word: str, confidence: float):
+        """Debounce: require DEBOUNCE_FRAMES consecutive same prediction."""
+        if word == self.debounce_word:
+            self.debounce_counter += 1
+        else:
+            self.debounce_word    = word
+            self.debounce_counter = 1
+
+        if self.debounce_counter >= DEBOUNCE_FRAMES:
+            if word != self.last_committed:
+                self.sentence_buffer.append(word)
+                self.last_committed    = word
+                self.debounce_counter  = 0
+                print(f"  ✚ Word committed: {word}  →  buffer: {self.sentence_buffer}")
+
+    def _flush_sentence(self):
+        if not self.sentence_buffer:
+            return
+        sentence = " ".join(self.sentence_buffer)
+        print(f"\n{'─'*60}")
+        print(f"  📝  Sentence: {sentence}")
+        print(f"{'─'*60}\n")
+        self.speaker.speak(sentence)
+        self.sentence_buffer  = []
+        self.last_committed   = None
+        self.no_hand_frames   = 0
+
+    def force_flush(self):
+        """Called on SPACE key press."""
+        self._flush_sentence()
+
+    @property
+    def current_sentence(self):
+        return " ".join(self.sentence_buffer)
 
 
-def test_on_webcam(model, scaler, sign_to_id):
-    """Real-time test with your ASL signs"""
-    
-    print("\n" + "="*70)
-    print("REAL-TIME TEST - YOUR ASL SIGNS")
-    print("="*70)
-    print("\nTest your ASL signs on webcam!")
-    print("Press 'q' to quit\n")
-    
+# ─── DRAW HUD ──────────────────────────────────────────────────────────────────
+
+def draw_hud(frame, predicted_word, confidence, state: SegmentationState, top3):
+    h, w = frame.shape[:2]
+
+    # ── top bar ──
+    cv2.rectangle(frame, (0, 0), (w, 70), (20, 20, 20), -1)
+
+    if predicted_word:
+        color = (0, 220, 100) if confidence >= CONFIDENCE_THRESH else (0, 140, 220)
+        cv2.putText(frame, f"{predicted_word}  {confidence:.0%}",
+                    (16, 48), cv2.FONT_HERSHEY_SIMPLEX, 1.4, color, 2)
+    else:
+        cv2.putText(frame, "— waiting —",
+                    (16, 48), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (120, 120, 120), 1)
+
+    # ── sentence strip ──
+    sentence_text = state.current_sentence if state.current_sentence else "..."
+    cv2.rectangle(frame, (0, h - 80), (w, h), (20, 20, 20), -1)
+    cv2.putText(frame, sentence_text,
+                (16, h - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 1)
+    cv2.putText(frame, "SENTENCE",
+                (16, h - 62), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 120, 120), 1)
+
+    # ── top-3 sidebar ──
+    cv2.rectangle(frame, (w - 200, 0), (w, 110), (30, 30, 30), -1)
+    cv2.putText(frame, "Top predictions",
+                (w - 195, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (150, 150, 150), 1)
+    for i, (sign, conf) in enumerate(top3):
+        y = 42 + i * 24
+        bar_w = int(160 * conf)
+        cv2.rectangle(frame, (w - 195, y - 14), (w - 195 + bar_w, y + 2), (50, 100, 60), -1)
+        cv2.putText(frame, f"{sign}  {conf:.0%}",
+                    (w - 193, y), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 230, 200), 1)
+
+    # ── gap indicator ──
+    gap = state.no_hand_frames
+    if gap > 0:
+        ratio   = min(gap / SENTENCE_GAP_FRAMES, 1.0)
+        bar_max = w - 40
+        bar_w   = int(bar_max * ratio)
+        color   = (0, int(200 * (1 - ratio)), int(200 * ratio))
+        cv2.rectangle(frame, (20, 75), (20 + bar_w, 84), color, -1)
+        cv2.putText(frame, "gap", (20, 73),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 120, 120), 1)
+
+    # ── controls ──
+    cv2.putText(frame, "SPACE: speak now   Q: quit",
+                (16, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (90, 90, 90), 1)
+
+    return frame
+
+
+# ─── MAIN DETECTION LOOP ───────────────────────────────────────────────────────
+
+def run_detection():
+
+    # Load model + assets
+    print("\nLoading model...")
+    try:
+        model    = load_model(MODEL_PATH)
+        scaler   = pickle.load(open(SCALER_PATH, 'rb'))
+        sign_map = pickle.load(open(SIGNS_PATH,  'rb'))
+    except FileNotFoundError as e:
+        print(f"❌  Missing file: {e}")
+        print("    Train the model first: python realdatatraining.py")
+        return
+
+    num_classes = len(sign_map)
+    print(f"✓  Model loaded — {num_classes} signs: {list(sign_map.values())}")
+
+    # MediaPipe
     mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(
+    mp_draw  = mp.solutions.drawing_utils
+    hands    = mp_hands.Hands(
         static_image_mode=False,
         max_num_hands=1,
-        min_detection_confidence=0.7
+        min_detection_confidence=0.70,
+        min_tracking_confidence=0.60,
     )
-    
+
+    # State
+    speaker   = TTSSpeaker()
+    seg_state = SegmentationState(speaker)
+    frame_buf = deque(maxlen=WINDOW_SIZE)   # rolling landmark buffer
+    frame_idx = 0                           # total frames processed
+    predicted_word = None
+    confidence     = 0.0
+    top3           = []
+
     cap = cv2.VideoCapture(0)
-    frame_sequence = []
-    
+    if not cap.isOpened():
+        print("❌  Cannot open webcam.")
+        return
+
+    print("\n" + "="*60)
+    print("  REAL-TIME SENTENCE DETECTION STARTED")
+    print("  Sign slowly and pause between words.")
+    print("  SPACE = speak sentence now   Q = quit")
+    print("="*60 + "\n")
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        
-        frame = cv2.flip(frame, 1)
-        h, w, c = frame.shape
-        
-        # Extract landmarks
+
+        frame     = cv2.flip(frame, 1)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(rgb_frame)
-        
+        results   = hands.process(rgb_frame)
+        frame_idx += 1
+
+        hand_detected = False
+
         if results.multi_hand_landmarks:
-            landmarks = results.multi_hand_landmarks[0]
-            hand_data = np.array([
-                [lm.x, lm.y, lm.z] for lm in landmarks.landmark
-            ]).flatten()
-            
-            frame_sequence.append(hand_data)
-            if len(frame_sequence) > 30:
-                frame_sequence.pop(0)
-            
-            # Predict if we have enough frames
-            if len(frame_sequence) >= 30:
-                # Normalize
-                seq = np.array(frame_sequence)
+            hand_detected = True
+            lm = results.multi_hand_landmarks[0]
+
+            # Draw skeleton
+            mp_draw.draw_landmarks(frame, lm, mp_hands.HAND_CONNECTIONS)
+
+            # Collect 63-d landmark vector
+            hand_vec = np.array([[p.x, p.y, p.z] for p in lm.landmark]).flatten()
+            frame_buf.append(hand_vec)
+
+            # Run inference every SLIDE_STEP frames once buffer is full
+            if len(frame_buf) == WINDOW_SIZE and frame_idx % SLIDE_STEP == 0:
+                seq = np.array(frame_buf)           # (30, 63)
                 seq = scaler.transform(seq)
-                seq = seq.reshape(1, 30, 63)
-                
-                # Predict
-                pred = model.predict(seq, verbose=0)
-                sign_id = np.argmax(pred)
-                confidence = pred[0][sign_id]
-                
-                sign_name = sign_to_id[sign_id]
-                
-                # Display
-                cv2.putText(frame, f"{sign_name} ({confidence:.0%})",
-                           (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5,
-                           (0, 255, 0), 2)
-                
-                # Show all predictions
-                sorted_indices = np.argsort(pred[0])[::-1][:3]
-                y_offset = 100
-                for idx in sorted_indices:
-                    sign = sign_to_id[idx]
-                    conf = pred[0][idx]
-                    cv2.putText(frame, f"{sign}: {conf:.0%}", (10, y_offset),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 0), 1)
-                    y_offset += 30
-        
-        cv2.imshow("Real ASL Sign Recognition", frame)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+                seq = seq.reshape(1, WINDOW_SIZE, 63)
+
+                probs     = model.predict(seq, verbose=0)[0]
+                top_idx   = np.argsort(probs)[::-1]
+                top3      = [(sign_map[i], probs[i]) for i in top_idx[:3]]
+                sign_id   = top_idx[0]
+                confidence= probs[sign_id]
+
+                if confidence >= CONFIDENCE_THRESH:
+                    predicted_word = sign_map[sign_id]
+                else:
+                    predicted_word = None
+
+        else:
+            predicted_word = None
+            confidence     = 0.0
+
+        # Update segmentation state machine
+        seg_state.update(hand_detected, predicted_word, confidence)
+
+        # Draw HUD
+        frame = draw_hud(frame, predicted_word, confidence, seg_state, top3)
+        cv2.imshow("ASL Sentence Detection", frame)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
-    
+        elif key == ord(' '):
+            seg_state.force_flush()
+
+    # Flush any remaining words on exit
+    seg_state.force_flush()
+
     cap.release()
     cv2.destroyAllWindows()
-    print("✓ Test complete!")
+    hands.close()
+    print("\n✓  Detection stopped.")
 
 
-def main():
-    print("\n" + "="*70)
-    print("TRAIN ON YOUR REAL ASL SIGNS")
-    print("="*70)
-    
-    # Load data
-    X, y, sign_to_id = load_real_asl_signs('real_asl_data')
-    
-    if X is None:
-        return
-    
-    num_classes = len(sign_to_id)
-    
-    # Train
-    model, scaler, history = train_model(X, y, num_classes)
-    
-    # Evaluate
-    evaluate_model(model, X, y, sign_to_id)
-    
-    # Save signs for later use
-    pickle.dump(sign_to_id, open('real_asl_signs.pkl', 'wb'))
-    
-    # Test
-    print("\nReady to test? Press ENTER...")
-    input()
-    test_on_webcam(model, scaler, sign_to_id)
-    
-    print("\n" + "="*70)
-    print("✅ DONE!")
-    print("="*70)
-    print(f"\nYour model is trained on {num_classes} real ASL signs!")
-    print(f"Files saved:")
-    print(f"  - real_asl_model.h5 (trained model)")
-    print(f"  - real_asl_scaler.pkl (normalization)")
-    print(f"  - real_asl_signs.pkl (sign names)")
-
+# ─── ENTRY ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    main()
+    run_detection()
