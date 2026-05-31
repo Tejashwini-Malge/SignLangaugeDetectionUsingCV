@@ -1,0 +1,14 @@
+2026-05-15 03:54:49,702 - __main__ - INFO - ======================================================================
+2026-05-15 03:54:49,703 - __main__ - INFO - Initializing ASL to Sentence Converter
+2026-05-15 03:54:49,703 - __main__ - INFO - ======================================================================
+2026-05-15 03:54:49,705 - __main__ - INFO - Initializing RealtimeSignDetector...
+2026-05-15 03:54:50,244 - absl - WARNING - Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+2026-05-15 03:54:50,339 - __main__ - INFO - Loaded model with 10 signs
+2026-05-15 03:54:50,404 - __main__ - INFO - RealtimeSignDetector initialized successfully
+2026-05-15 03:54:50,405 - __main__ - INFO - Initializing SignSequenceProcessor...
+2026-05-15 03:54:50,408 - __main__ - INFO - SignSequenceProcessor initialized
+2026-05-15 03:54:50,409 - __main__ - INFO - Initializing GroqSentenceGenerator...
+2026-05-15 03:54:51,106 - __main__ - INFO - Groq client initialized with model: mixtral-8x7b-32768
+2026-05-15 03:54:51,107 - __main__ - INFO - ASL to Sentence Converter initialized successfully
+2026-05-15 03:54:51,109 - __main__ - INFO - Starting webcam inference...
+2026-05-15 03:59:50,925 - __main__ - INFO - Stopped by user

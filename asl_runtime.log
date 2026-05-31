@@ -1,0 +1,57 @@
+2026-05-15 04:14:43,779 - INFO - ======================================================================
+2026-05-15 04:14:43,781 - INFO - Initializing ASL Application
+2026-05-15 04:14:43,782 - INFO - ======================================================================
+2026-05-15 04:14:43,782 - INFO - Loading model...
+2026-05-15 04:14:44,334 - WARNING - Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+2026-05-15 04:14:44,386 - INFO - Initializing MediaPipe...
+2026-05-15 04:14:44,434 - INFO - Detector ready
+2026-05-15 04:15:00,276 - INFO - New sign: CHAIR (1.00)
+2026-05-15 04:15:09,757 - INFO - New sign: DRINK (0.85)
+2026-05-15 04:15:13,302 - INFO - Sentence complete: ['CHAIR']
+2026-05-15 04:15:13,835 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 400 Bad Request"
+2026-05-15 04:15:13,839 - ERROR - Groq generation error: Error code: 400 - {'error': {'message': 'The model `mixtral-8x7b-32768` has been decommissioned and is no longer supported. Please refer to https://console.groq.com/docs/deprecations for a recommendation on which model to use instead.', 'type': 'invalid_request_error', 'code': 'model_decommissioned'}}
+2026-05-15 04:15:21,924 - INFO - New sign: BEAUTIFUL (0.75)
+2026-05-15 04:15:23,527 - INFO - New sign: BOOK (0.89)
+2026-05-15 04:15:25,473 - INFO - New sign: HAPPY (0.82)
+2026-05-15 04:15:27,162 - INFO - New sign: HAPPY (0.74)
+2026-05-15 04:15:30,849 - INFO - Sentence complete: ['DRINK']
+2026-05-15 04:15:31,101 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 400 Bad Request"
+2026-05-15 04:15:31,103 - ERROR - Groq generation error: Error code: 400 - {'error': {'message': 'The model `mixtral-8x7b-32768` has been decommissioned and is no longer supported. Please refer to https://console.groq.com/docs/deprecations for a recommendation on which model to use instead.', 'type': 'invalid_request_error', 'code': 'model_decommissioned'}}
+2026-05-15 04:15:34,191 - INFO - New sign: BOOK (0.74)
+2026-05-15 04:15:44,842 - INFO - Sentence complete: ['HAPPY']
+2026-05-15 04:15:45,090 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 400 Bad Request"
+2026-05-15 04:15:45,092 - ERROR - Groq generation error: Error code: 400 - {'error': {'message': 'The model `mixtral-8x7b-32768` has been decommissioned and is no longer supported. Please refer to https://console.groq.com/docs/deprecations for a recommendation on which model to use instead.', 'type': 'invalid_request_error', 'code': 'model_decommissioned'}}
+2026-05-15 04:15:46,049 - INFO - New sign: HAPPY (0.88)
+2026-05-15 04:20:30,876 - INFO - ======================================================================
+2026-05-15 04:20:30,878 - INFO - Initializing ASL Application
+2026-05-15 04:20:30,879 - INFO - ======================================================================
+2026-05-15 04:20:30,880 - INFO - Loading model...
+2026-05-15 04:20:31,234 - WARNING - Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+2026-05-15 04:20:31,284 - INFO - Initializing MediaPipe...
+2026-05-15 04:20:31,314 - INFO - Detector ready
+2026-05-15 04:20:43,348 - INFO - New sign: LOVE (1.00)
+2026-05-15 04:20:50,765 - INFO - New sign: CHAIR (0.95)
+2026-05-15 04:20:54,991 - INFO - Sentence complete: ['LOVE']
+2026-05-15 04:20:55,479 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 400 Bad Request"
+2026-05-15 04:20:55,481 - ERROR - Groq generation error: Error code: 400 - {'error': {'message': 'The model `llama3-8b-8192` has been decommissioned and is no longer supported. Please refer to https://console.groq.com/docs/deprecations for a recommendation on which model to use instead.', 'type': 'invalid_request_error', 'code': 'model_decommissioned'}}
+2026-05-15 04:22:07,623 - INFO - ======================================================================
+2026-05-15 04:22:07,625 - INFO - Initializing ASL Application
+2026-05-15 04:22:07,625 - INFO - ======================================================================
+2026-05-15 04:22:07,628 - INFO - Loading model...
+2026-05-15 04:22:08,142 - WARNING - Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+2026-05-15 04:22:08,214 - INFO - Initializing MediaPipe...
+2026-05-15 04:22:08,258 - INFO - Detector ready
+2026-05-15 04:22:21,604 - INFO - New sign: BEAUTIFUL (1.00)
+2026-05-15 04:22:22,670 - INFO - New sign: BOOK (0.85)
+2026-05-15 04:22:34,352 - INFO - New sign: HELP (0.88)
+2026-05-15 04:22:58,665 - INFO - Sentence complete: ['BOOK']
+2026-05-15 04:23:47,949 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-15 04:23:47,993 - INFO - Sentence: I'm reading a book.
+2026-05-15 04:24:11,221 - INFO - New sign: BEAUTIFUL (0.84)
+2026-05-15 04:24:28,006 - INFO - New sign: DRINK (0.77)
+2026-05-15 04:24:46,531 - INFO - Sentence complete: ['HELP']
+2026-05-15 04:24:47,095 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-15 04:24:47,098 - INFO - Sentence: I need help.
+2026-05-15 04:25:30,849 - INFO - New sign: DRINK (0.76)
+2026-05-15 04:26:17,186 - INFO - New sign: CHAIR (0.80)
+2026-05-15 04:26:59,805 - INFO - New sign: BEAUTIFUL (0.89)
